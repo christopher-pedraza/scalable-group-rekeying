@@ -30,13 +30,12 @@ class Via(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class Acquisition:
-    """When the key was learned and by what route (Via)
+    """When the key was learned.
     Lets the verifier ask what a member knew as of epoch e and how the key arrived"""
 
     ref: KeyRef
     key: bytes  # TGDH secrets are stored as big-endian bytes of the exponent
     epoch: Epoch
-    via: Via
 
 
 @dataclass(slots=True)
@@ -55,9 +54,9 @@ class KeyRing:
     # Lookup table to answer if the person holds a certain key and what are its bytes
     _index: dict[KeyRef, bytes] = field(default_factory=dict, init=False, repr=False)
 
-    def learn(self, ref: KeyRef, key: bytes, epoch: Epoch, via: Via) -> None:
+    def learn(self, ref: KeyRef, key: bytes, epoch: Epoch) -> None:
         """Member learns a new key"""
-        self.history.append(Acquisition(ref, key, epoch, via))
+        self.history.append(Acquisition(ref, key, epoch))
         self._index[ref] = key
 
     def get(self, ref: KeyRef) -> bytes | None:
@@ -96,7 +95,6 @@ class KeyRing:
 class EventKind(StrEnum):
     """Membership events that trigger a rekey"""
 
-    INIT = "init"
     JOIN = "join"
     LEAVE = "leave"
     REJOIN = "rejoin"  # Tells the verifier to check for old-stint keys staying useless
@@ -227,8 +225,7 @@ class EventCost:
     epoch: Epoch
     n_joins: int  # joins and rejoins
     n_leaves: int
-    members_before: int
-    members_after: int
+    members_before: int  # after = before + joins - leaves
     height: int  # tree height after the event (Star = 1; LKH/TGDH = root->deepest leaf)
     # --- messages / symmetric crypto (Star, LKH) ---
     messages_multicast: int
@@ -316,7 +313,7 @@ class NodeSnapshot:
     """One tree node shape the UI can draw using only fingerprints, without revealing
     the keys."""
 
-    id: int
+    version: int
     parent: int | None
     children: tuple[
         int, ...
