@@ -19,19 +19,9 @@ class KeyRef:
     version: int
 
 
-class Via(StrEnum):
-    """Describes from where the key arrives"""
-
-    INDIVIDUAL = "individual"  # given at join (shared with controller)
-    UNWRAP = "unwrap"  # learned by decrypting a Wrap
-    GENERATED = "generated"  # own fresh secret (TGDH leaf share, sponsor refresh)
-    DERIVED = "derived"  # computed (TGDH: BK_sibling ^ child_secret mod p)
-
-
 @dataclass(frozen=True, slots=True)
 class Acquisition:
-    """When the key was learned.
-    Lets the verifier ask what a member knew as of epoch e and how the key arrived"""
+    """When the key was learned."""
 
     ref: KeyRef
     key: bytes  # TGDH secrets are stored as big-endian bytes of the exponent
@@ -48,9 +38,6 @@ class KeyRing:
     member: MemberId
     # What the person learns and when. Lets you filter by epoch
     history: list[Acquisition] = field(default_factory=list)
-    # Periods in which the person was a member. None for second value in case it's a
-    # active member (joined, left|None)
-    stints: list[tuple[Epoch, Epoch | None]] = field(default_factory=list)
     # Lookup table to answer if the person holds a certain key and what are its bytes
     _index: dict[KeyRef, bytes] = field(default_factory=dict, init=False, repr=False)
 
@@ -69,25 +56,6 @@ class KeyRing:
         """Returns everything the person has ever been given over their whole history"""
         return dict(self._index)
 
-    def held_until(self, epoch: Epoch) -> dict[KeyRef, bytes]:
-        """Returns what the person already has as of epoch e"""
-        return {a.ref: a.key for a in self.history if a.epoch <= epoch}
-
-    def open_stint(self, epoch: Epoch) -> None:
-        """Records the beginning of the membership. Called when joining/rejoining"""
-        self.stints.append((epoch, None))
-
-    def close_stint(self, epoch: Epoch) -> None:
-        """Updates the current membership end date. Called when leaving"""
-        joined, left = self.stints[-1]
-        # if current member leaving, should not have close date
-        assert left is None, "no open stint"
-        self.stints[-1] = (joined, epoch)
-
-    def is_member_at(self, epoch: Epoch) -> bool:
-        """Checks whether the person was a member during the given epoch"""
-        return any(j <= epoch and (l is None or epoch < l) for j, l in self.stints)  # noqa: E741
-
 
 # ---------- membership events ----------
 
@@ -95,7 +63,7 @@ class KeyRing:
 class EventKind(StrEnum):
     """Membership events that trigger a rekey"""
 
-    JOIN = "join"
+    JOIN = "join"  # the initial group at epoch 0 is a batch of JOINs at time 0
     LEAVE = "leave"
     REJOIN = "rejoin"  # Tells the verifier to check for old-stint keys staying useless
 
@@ -116,16 +84,15 @@ class Batch:
     events for the same member."""
 
     events: tuple[Event, ...]
-    # For a single rekeying event t_open = t_apply = event.time.
-    # For a batch of multiple events, the controller collects events inside the interval
-    # [t_open, t_apply) and then applies the rekey at t_apply only once for all events.
+    # For a single rekeying event t_apply = event.time.
+    # For a batch of multiple events, the controller collects events inside an interval
+    # and then applies the rekey at t_apply only once for all events.
     # The period t_apply-event.time is the vulnerability window.
-    t_open: float  # start of interval T
     t_apply: float
 
     @classmethod
     def single(cls, e: Event) -> "Batch":
-        return cls((e,), e.time, e.time)
+        return cls((e,), e.time)
 
 
 # ---------- rekey messages (public) ----------
@@ -152,20 +119,13 @@ class BlindedKey:
     children: tuple[KeyRef, ...] = ()
 
 
-class Audience(StrEnum):
-    """Describes the intended recipients of a rekey message"""
-
-    MULTICAST = "multicast"
-    UNICAST = "unicast"
-
-
 @dataclass(frozen=True, slots=True)
 class RekeyMessage:
     """A single broadcast or unicast message with the new keys."""
 
     epoch: Epoch  # the epoch this message helps create
     sender: MemberId | None  # None = group controller (Star/LKH)
-    recipient: MemberId | None = None  # set iff UNICAST
+    recipient: MemberId | None = None  # None = multicast to the group; else unicast
     wraps: tuple[Wrap, ...] = ()  # Star / LKH
     blinded: tuple[BlindedKey, ...] = ()  # TGDH
 
@@ -193,7 +153,7 @@ class EpochRecord:
     real key to compare against)"""
 
     epoch: Epoch
-    batch: Batch | None  # None for epoch 0
+    batch: Batch
     # The member list cannot come from the tree because that's being tested. The
     # verifier needs the source of truth and the tree could have a bug and corrupt
     # the answer. Thus, the membership is replayed from the events: the simulator
@@ -204,15 +164,6 @@ class EpochRecord:
     ]  # replayed from events by the simulator, not read from the tree
     group_ref: KeyRef
     group_key: bytes
-
-
-@dataclass(slots=True)
-class GroundTruth:
-    """The true state of the group (all epoch records and live references to every
-    KeyRing), known only to the verifier."""
-
-    epochs: list[EpochRecord] = field(default_factory=list)
-    rings: dict[MemberId, KeyRing] = field(default_factory=dict)
 
 
 # ---------- cost metrics ----------
@@ -228,8 +179,8 @@ class EventCost:
     members_before: int  # after = before + joins - leaves
     height: int  # tree height after the event (Star = 1; LKH/TGDH = root->deepest leaf)
     # --- messages / symmetric crypto (Star, LKH) ---
-    messages_multicast: int
-    messages_unicast: int
+    messages_multicast: int  # messages with recipient None
+    messages_unicast: int  # messages with a recipient
     wraps: int  # AEAD calls (ciphertexts)
     key_encryptions: int  # Wong units: Σ len(payloads)
     unwraps: int  # member-side decryption attempts that succeeded
@@ -313,14 +264,14 @@ class NodeSnapshot:
     """One tree node shape the UI can draw using only fingerprints, without revealing
     the keys."""
 
-    version: int
+    id: int
     parent: int | None
     children: tuple[
         int, ...
     ]  # Star: root->leaves. LKH: ≤ d. TGDH: exactly 0 (leaf) or 2
     member: MemberId | None  # set on leaves
     size: int  # members below this node; root = n, leaves = 1
-    key: KeyRef
+    version: int  # version of this node's current key; KeyRef(id, version) names it
     key_fp: str  # first 8 hex chars of SHA-256(key); NEVER the key itself
     bk_fp: str | None = None  # TGDH only (public anyway)
     changed: bool = False  # rekeyed by the last batch
@@ -351,12 +302,17 @@ class Snapshot:
     viewer: (
         MemberId | None
     )  # None = global/controller view. Else `held`/`on_copath` are for them
-    members: tuple[MemberId, ...]
     last_event: str  # e.g. "leave u7", for the UI caption
     wrap_edges: tuple[
         WrapEdge, ...
     ] = ()  # Star/LKH: arrows of the last rekey message(s)
     cost: EventCost | None = None
+
+    @property
+    def members(self) -> tuple[MemberId, ...]:
+        """Derived from the leaves, not stored. to_jsonable() includes it for the UI's
+        "view as" dropdown."""
+        return tuple(sorted(n.member for n in self.nodes if n.member is not None))
 
 
 def to_jsonable(obj: object) -> object:
