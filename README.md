@@ -2,6 +2,8 @@
 
 ## Development setup
 
+Install uv in case your system doesn't have it: [Installation](https://docs.astral.sh/uv/getting-started/installation/)
+
 ```bash
 uv sync                        # install dependencies
 uv run pre-commit install      # auto-format and lint on every commit
