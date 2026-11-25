@@ -128,6 +128,7 @@ class RekeyMessage:
     recipient: MemberId | None = None  # None = multicast to the group; else unicast
     wraps: tuple[Wrap, ...] = ()  # Star / LKH
     blinded: tuple[BlindedKey, ...] = ()  # TGDH
+    signature: bytes = b""  # Ed25519; b"" = unsigned
 
 
 @dataclass(frozen=True, slots=True)
@@ -254,6 +255,7 @@ class SchemeConfig:
     degree: int = 4  # LKH only
     dh: DHParams = DH_TOY  # TGDH only
     fault: Fault = Fault.NONE
+    sign: bool = True  # whether rekey messages are signed
 
 
 # ---------- tree snapshots (what the UI draws) ----------
@@ -318,4 +320,4 @@ class Snapshot:
 def to_jsonable(obj: object) -> object:
     """dataclass/enum/bytes/tuple/frozenset → plain JSON types
     (bytes→hex, sets→sorted lists)."""
-    ...
+    ...  # TODO: Still have to implement this!!
