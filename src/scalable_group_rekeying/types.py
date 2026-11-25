@@ -112,7 +112,7 @@ class BlindedKey:
     """A TGDH public value a^key mod p, with the refs of its two children."""
 
     node: KeyRef
-    bk: int
+    bk: bytes
     # If it's a leaf, children is empty. Otherwise, they are the two nodes that were
     # combined to compute this BK. Lets the verifier apply the DH rule without importing
     # the TGDH code.
@@ -185,7 +185,7 @@ class EventCost:
     wraps: int  # AEAD calls (ciphertexts)
     key_encryptions: int  # Wong units: Σ len(payloads)
     unwraps: int  # member-side decryption attempts that succeeded
-    bytes_on_wire: int  # bytes sent over the network by all events
+    bytes_on_wire: int  # encoded messages + signatures; each message counted once
     # --- public key (TGDH) ---
     modexp_total: int  # sum exponentiations over all actors
     modexp_serial: int  # max exponentiation over any single member
