@@ -5,11 +5,13 @@ import random
 import secrets
 
 from cryptography.exceptions import InvalidTag
+from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PrivateKey,  # noqa: F401 TODO: REMOVE this ignore
     Ed25519PublicKey,  # noqa: F401 TODO: REMOVE this ignore
 )
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 from scalable_group_rekeying.types import Epoch, KeyRef, RekeyMessage
 
@@ -130,12 +132,34 @@ def open_sealed(group_key: bytes, blob: bytes, epoch: Epoch) -> bytes | None:
     return unwrap(group_key, blob, _data_context(epoch))
 
 
-# Converts between integers (for secrets) and bytes (for keyring)
-def int_to_key(x: int, nbytes: int) -> bytes: ...  # TGDH exponent ↔ ring bytes
-def key_to_int(b: bytes) -> int: ...
-def derive_group_key(
-    root_secret: int, label: bytes
-) -> bytes: ...  # hash the DH value, never use it raw
+# TGDH: Converts between integers (for secrets) and bytes (for keyring)
+
+
+def int_to_key(x: int, nbytes: int) -> bytes:
+    """Converts an integer to a fixed-length byte string."""
+    return x.to_bytes(nbytes, "big")  # need bytes for storage
+
+
+def key_to_int(b: bytes) -> int:
+    """Converts a byte string to an integer."""
+    return int.from_bytes(b, "big")  # need int for DH math
+
+
+def derive_group_key(root_secret: int, label: bytes) -> bytes:
+    """Turns the root secret into a normal symmetric key to encrypt data with.
+
+    This is needed because, while a Diffie-Hellman result is a secret, it doesn't work
+    as a good key because it's a number with a mathematical structure of the size p
+    dictates."""
+    # (root_secret.bit_length() + 7) // 8 is the number of bytes the integer needs
+    # Since // rounds down, I add 7 to round up to the next byte if needed.
+    secret = int_to_key(root_secret, (root_secret.bit_length() + 7) // 8)
+    # HKDF (HMAC-based Key Derivation Function) turns the secret into a random-looking
+    # bytes of length KEY_LEN, using SHA256 inside the HMAC. Different labels give
+    # unrelated keys, so the same root secret can be used for different purposes
+    return HKDF(
+        algorithm=hashes.SHA256(), length=KEY_LEN, salt=None, info=label
+    ).derive(secret)
 
 
 # signatures (thin wrappers over cryptography's Ed25519)
