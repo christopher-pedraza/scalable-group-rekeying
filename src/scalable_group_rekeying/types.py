@@ -194,14 +194,6 @@ class EventCost:
 # ---------- configuration ----------
 
 
-class Mode(StrEnum):
-    """Describes whether the simulator uses real crypto or just placeholder keys and
-    counters."""
-
-    REAL = "real"  # real keys and wraps. Required by the verifier and games
-    COUNT = "count"  # placeholder blobs of exact length and counters only.
-
-
 class Fault(StrEnum):
     """Tag to flag deliberately broken rekeying"""
 
@@ -251,11 +243,11 @@ class SchemeConfig:
     """Parameters that control the simulator's behavior"""
 
     seed: int | None = None
-    mode: Mode = Mode.REAL
     degree: int = 4  # LKH only
     dh: DHParams = DH_TOY  # TGDH only
     fault: Fault = Fault.NONE
     sign: bool = True  # whether rekey messages are signed
+    cache: bool = True  # reuse repeated work; set False when measuring running time
 
 
 # ---------- tree snapshots (what the UI draws) ----------
