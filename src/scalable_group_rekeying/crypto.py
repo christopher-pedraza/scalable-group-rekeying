@@ -110,12 +110,24 @@ def wrap_len(
     return NONCE_LEN + n_payloads * KEY_LEN + TAG_LEN  # nounce || ciphertext || tag
 
 
-# The same primitives of wrap and unwrap, but for data messages under the epoch's group
-# key
-def seal(group_key: bytes, plaintext: bytes, epoch: Epoch, nonce: bytes) -> bytes: ...
+# Data messages
 
 
-def open_sealed(group_key: bytes, blob: bytes, epoch: Epoch) -> bytes | None: ...
+def _data_context(epoch: Epoch) -> bytes:
+    """Bind the message blob to its epoch with the suffix "data" to prevent wrapping
+    keys and data wrapped with the same group key being accepted as the other type of
+    message."""
+    return b"data" + epoch.to_bytes(8, "big")
+
+
+def seal(group_key: bytes, plaintext: bytes, epoch: Epoch, nonce: bytes) -> bytes:
+    """Encrypts application data under the epoch's group key."""
+    return wrap(group_key, plaintext, _data_context(epoch), nonce)
+
+
+def open_sealed(group_key: bytes, blob: bytes, epoch: Epoch) -> bytes | None:
+    """Returns the plaintext, or None if the blob, key or epoch doesn't match."""
+    return unwrap(group_key, blob, _data_context(epoch))
 
 
 # Converts between integers (for secrets) and bytes (for keyring)
