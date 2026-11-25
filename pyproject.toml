@@ -7,10 +7,12 @@ authors = [
     { name = "christopher-pedraza", email = "62347713+christopher-pedraza@users.noreply.github.com" }
 ]
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "cryptography>=50.0.2",
+]
 
 [build-system]
-requires = ["uv_build>=0.12.24,<0.13.0"]
+requires = ["uv_build>=0.12.24,<0.14.0"]
 build-backend = "uv_build"
 
 [dependency-groups]
