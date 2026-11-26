@@ -16,3 +16,8 @@ Before pushing, you can run the same checks as CI:
 ```bash
 uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run pytest
 ```
+
+Running the experiments
+```bash
+uv run python -m experiments.run_all
+```

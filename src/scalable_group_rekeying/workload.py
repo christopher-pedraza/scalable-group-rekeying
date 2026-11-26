@@ -31,7 +31,8 @@ def batch_by_interval(events: Sequence[Event], interval: float) -> list[Batch]:
 
     Empty intervals give no batch. Every batch must be accepted by apply():
     - no member appears twice (decide what to do with a join and leave of the same
-      member inside one interval)
+      member inside one interval; if you drop both, a later rejoin of that member
+      becomes invalid)
     - at least one current member stays
     - no event is later than t_apply
     """
