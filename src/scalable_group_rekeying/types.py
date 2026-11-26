@@ -310,8 +310,8 @@ class Snapshot:
 
 
 def to_jsonable(obj: object) -> object:
-    """dataclass/enum/bytes/tuple/frozenset -> plain JSON types
-    (bytes->hex, sets->sorted lists). Raises TypeError for any other type."""
+    """dataclass/enum/bytes/tuple/frozenset -> plain JSON types (bytes->hex,
+    sets->sorted lists, large ints->strings). Raises TypeError for any other type."""
     if isinstance(obj, Enum):  # checked first, because a StrEnum is also a str
         return obj.value
     if isinstance(obj, int) and abs(obj) > 2**53 - 1:
