@@ -71,7 +71,7 @@ def wrap_context(wrapper: KeyRef, payloads: tuple[KeyRef, ...], epoch: Epoch) ->
     """Binds a blob to its wrapper, payloads and epoch.
 
     This context is added to the tag so a valid blob that is sent with a different label
-      or in a later epoch can be identified."""
+    or in a later epoch can be identified."""
     numbers = [epoch, wrapper.node, wrapper.version, len(payloads)]
     for ref in payloads:
         numbers += [ref.node, ref.version]
