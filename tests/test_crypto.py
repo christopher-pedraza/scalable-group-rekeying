@@ -147,13 +147,12 @@ def test_int_and_key_conversion_round_trip() -> None:
     assert key_to_int(int_to_key(258, 4)) == 258
 
 
-def test_derived_group_key_depends_on_secret_and_label() -> None:
-    key = derive_group_key(12345, b"group")
+def test_derived_group_key_depends_on_secret() -> None:
+    key = derive_group_key(12345)
 
     assert len(key) == KEY_LEN
-    assert derive_group_key(12345, b"group") == key
-    assert derive_group_key(12345, b"other") != key
-    assert derive_group_key(12346, b"group") != key
+    assert derive_group_key(12345) == key
+    assert derive_group_key(12346) != key
 
 
 # ---------- signatures ----------

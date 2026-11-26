@@ -1,5 +1,6 @@
 import itertools
 from abc import ABC, abstractmethod
+from collections import Counter
 from collections.abc import (
     Callable,
     Sequence,
@@ -53,6 +54,18 @@ class DeliveryResult:
     learned: tuple[KeyRef, ...]  # keys it newly acquired
 
 
+def _caption(epoch: Epoch, batch: Batch) -> str:
+    """The UI caption for Snapshot.last_event."""
+    if epoch == 0:
+        return f"init: {len(batch.events)} members"
+    if len(batch.events) == 1:
+        event = batch.events[0]
+        return f"{event.kind} u{event.member}"  # "leave u7"
+    counts = Counter(e.kind for e in batch.events)
+    parts = [f"{counts[kind]} {kind}" for kind in EventKind if counts[kind]]
+    return "batch: " + ", ".join(parts)  # "batch: 3 join, 2 leave"
+
+
 class RekeyScheme(ABC):
     name: ClassVar[str]  # "star" | "lkh" | "tgdh"
     supports_batch: ClassVar[bool] = False
@@ -70,7 +83,7 @@ class RekeyScheme(ABC):
         self._signing_keys: dict[
             MemberId | None, bytes
         ] = {}  # per sender (None = controller), never pruned
-        self._public_keys: dict[MemberId | None, bytes] = {}  # same owners
+        self._public_keys: dict[MemberId | None, bytes] = {}  # filled on demand
         self._new_signing_key(None)  # the controller's
         self._pow_cache: dict[
             tuple[int, int, int], int
@@ -82,6 +95,7 @@ class RekeyScheme(ABC):
         # on every lookup. IDs will differ even if the content is the same
         self._verified: dict[int, tuple[RekeyMessage, bool]] = {}
         self._node_ids = itertools.count()  # iterator of the nodes (start=0 step=1)
+        self.last_event = ""
 
     # ---- lifecycle ----
     def init(self, members: Sequence[MemberId]) -> RekeyOutcome:
@@ -95,8 +109,24 @@ class RekeyScheme(ABC):
 
     @abstractmethod
     def _init(self, batch: Batch) -> Sequence[RekeyMessage]:
-        """Scheme-specific setup of the initial group: creates the keys and returns the
-        messages, already signed, in send order."""
+        """Scheme-specific setup of the initial group (epoch 0).
+
+        batch has one JOIN per member, even if supports_batch is False. Their key
+        rings and signing keys already exist.
+
+        Must:
+        - build the key structure, using self.keys for randomness and
+          self._next_node() for node ids
+        - store each member's own starting secret (individual key, or TGDH exponent)
+          with self.keyring(m).learn(ref, secret, self.epoch)
+        - send the rest in messages signed with self._signed()
+        - pass those messages to the members through self.deliver() before returning,
+          so member-side work is counted in this batch's cost
+        - TGDH: tell members who is in the group first. A member that computes keys
+          itself records them and marks the epoch completed
+        - leave members(), group_key() and height() matching the new group
+
+        Returns the messages in send order."""
 
     def _validate(self, batch: Batch) -> None:
         """Checks that the batch is valid for the current state. Raises ValueError if
@@ -135,12 +165,32 @@ class RekeyScheme(ABC):
 
     @abstractmethod
     def _apply(self, batch: Batch) -> Sequence[RekeyMessage]:
-        """Scheme-specific rekey for self.epoch: updates the keys and returns the
-        messages, already signed, in send order."""
-        # TODO: This is the method that we will be overwriting in our schemes @Zeyad!
-        # Also, don't catch errors in this function because if there's an error and the
-        # execution continues, then we will have (from apply()) a half updated state
-        # let the error stop the run and fix the bug.
+        """Scheme-specific rekey. self.epoch is already the new epoch.
+
+        batch is already validated. It has one event if supports_batch is False,
+        otherwise it can mix joins, leaves and rejoins.
+
+        Must (unless self.config.fault deliberately breaks a rule):
+        - replace every key a leaver knew and every key a joiner is about to learn
+        - encrypt a new key only under keys whose holders are all entitled to it
+        - Star/LKH: take new keys from self.keys, never deriving them from old
+          ones. TGDH: take new shares from self.keys.exponent(); node keys follow
+          by DH
+        - in a batch, replace each affected key once, children before parents
+        - bump KeyRef.version when a node's key changes; new nodes use
+          self._next_node()
+        - give a joiner or rejoiner a new leaf and a new starting secret, stored
+          with self.keyring(m).learn(ref, secret, self.epoch); nothing from an
+          earlier stint may become useful again
+        - use self._wrap() and self._modexp(), so the work is counted
+        - sign with self._signed() and deliver with self.deliver() before returning
+        - TGDH: tell members the event first. The sponsor refreshes its share,
+          records its new keys, marks the epoch completed and sends blinded keys
+          (the whole tree on a join)
+
+        Don't catch errors: carrying on would leave the group half updated.
+
+        Returns the messages in send order."""
 
     def _run(
         self, batch: Batch, step: Callable[[Batch], Sequence[RekeyMessage]]
@@ -153,6 +203,7 @@ class RekeyScheme(ABC):
         # would now inherit the cached verification result. Clear on every batch
         self._verified.clear()
         self.epoch = Epoch(self.epoch + 1)
+        self.last_event = _caption(self.epoch, batch)
         for e in batch.events:  # a rejoining member keeps their old ring
             if e.member not in self._rings:
                 self._rings[e.member] = KeyRing(e.member)
@@ -189,9 +240,20 @@ class RekeyScheme(ABC):
 
     # ---- global view for the simulator/verifier oracle, NOT the adversary ----
     @abstractmethod
-    def members(self) -> frozenset[MemberId]: ...
+    def members(self) -> frozenset[MemberId]:
+        """Current members according to the scheme's own key structure.
+
+        Empty before init(). Returns a copy, not a live view. The verifier compares
+        it with the membership replayed from the events."""
+
     @abstractmethod
-    def group_key(self) -> tuple[KeyRef, bytes]: ...
+    def group_key(self) -> tuple[KeyRef, bytes]:
+        """Ref and KEY_LEN-byte key of the real current group key, not one member's
+        view. Only valid after init().
+
+        Star/LKH: the root key. TGDH: the root's ref and derive_group_key() of the
+        root secret."""
+
     def keyring(self, m: MemberId) -> KeyRing:
         """Current and former members. Raises if m never joined"""
         # Only a wrong id, a request for a nonexistent member or a call before init
@@ -200,19 +262,25 @@ class RekeyScheme(ABC):
         return self._rings[m]
 
     @abstractmethod
-    def height(self) -> int: ...  # Star = 1; LKH/TGDH = root->deepest leaf
+    def height(self) -> int:
+        """Edges from the root to the deepest leaf after the latest batch. Star is
+        always 1; a tree that is a single leaf is 0."""
 
     # ---- signing keys ----
     def _new_signing_key(self, owner: MemberId | None) -> None:
-        """Creates a signing key and stores it with its public key."""
-        private = self.keys.signing_key()
-        self._signing_keys[owner] = private
-        self._public_keys[owner] = derive_public_key(private)
+        """Creates a signing key and caches it. The public key is derived on demand."""
+        self._signing_keys[owner] = self.keys.signing_key()
 
     def public_key(self, sender: MemberId | None) -> bytes | None:
-        """Gets the public signing key for a member. None if the sender has no signing
-        key"""
-        return self._public_keys.get(sender)
+        """Gets the public signing key for a member and caches it. None if the sender
+        has no signing key"""
+        public = self._public_keys.get(sender)
+        if (
+            public is None and sender in self._signing_keys
+        ):  # no public key yet but private key exists
+            public = derive_public_key(self._signing_keys[sender])
+            self._public_keys[sender] = public
+        return public
 
     def signing_key(self, member: MemberId) -> bytes | None:
         """Gets the private signing key for a member. Outside the scheme, only a
@@ -221,15 +289,53 @@ class RekeyScheme(ABC):
 
     # ---- attack surface ----
     @abstractmethod
-    def deliver(self, member: MemberId, msg: RekeyMessage) -> DeliveryResult: ...
+    def deliver(self, member: MemberId, msg: RekeyMessage) -> DeliveryResult:
+        """Processes msg as member would, using only what that member has: its key
+        ring, the public state it has stored, public signing keys and membership
+        events, which are public. Never reads the controller's keys or another
+        member's secrets.
+
+        msg may be forged, replayed or meant for someone else, and member may have
+        left. Reject it if:
+        - recipient is another member
+        - the sender may not send it (Star/LKH: only the controller, None; TGDH: a
+          current member in this member's view, or the joiner)
+        - msg.epoch is not newer than the last epoch this member completed, that
+          is, got the group key for
+        - self._signature_ok(msg) is False
+
+        A rejected message changes nothing and returns DeliveryResult(False, ()).
+        Never raises for a bad message.
+
+        Otherwise opens each wrap it holds the key for with self._unwrap(w, key,
+        msg.epoch), repeating until nothing new opens but never reopening one, or
+        computes with self._modexp(). Records every key it learns or computes,
+        path keys included, with self.keyring(member).learn(ref, key, msg.epoch).
+        TGDH secrets use int_to_key() with the byte length of p.
+
+        accepted: the member's state changed. learned: refs of the new keys, which
+        can be empty (a TGDH member may only store blinded keys)."""
+
     @abstractmethod
-    def member_group_key(
-        self, member: MemberId
-    ) -> tuple[KeyRef, bytes] | None: ...  # what THEY believe
+    def member_group_key(self, member: MemberId) -> tuple[KeyRef, bytes] | None:
+        """The group key member believes is current, from its own state only, in the
+        same form as group_key(). None if it never got one. It can be stale or wrong,
+        for example after the member leaves."""
 
     # ---- UI ----
     @abstractmethod
-    def snapshot(self, viewer: MemberId | None = None) -> Snapshot: ...
+    def snapshot(self, viewer: MemberId | None = None) -> Snapshot:
+        """The tree at the current epoch, for the UI. Read-only: changes no state and
+        counts no costs.
+
+        - nodes: every node, flat. Keys appear only as fingerprints (first 8 hex
+          chars of SHA-256), never as bytes
+        - changed: rekeyed by the last batch
+        - held, on_copath: from viewer's point of view; False if viewer is None
+        - bk_fp, on_copath, is_sponsor: TGDH only
+        - wrap_edges: one per (wrapper, payload) pair in the last batch (Star/LKH)
+        - last_event: use self.last_event
+        - cost: leave None, as it is only known after the batch returns"""
 
     # ---- helpers shared by all schemes ----
     def _wrap(

@@ -14,6 +14,7 @@ from scalable_group_rekeying.types import Epoch, KeyRef, RekeyMessage
 
 KEY_LEN, NONCE_LEN, TAG_LEN = 32, 12, 16
 SIG_KEY_LEN, SIG_LEN = 32, 64
+_GROUP_KEY_LABEL = b"tgdh-group-key"
 
 
 class KeySource:
@@ -140,7 +141,7 @@ def key_to_int(b: bytes) -> int:
     return int.from_bytes(b, "big")  # need int for DH math
 
 
-def derive_group_key(root_secret: int, label: bytes) -> bytes:
+def derive_group_key(root_secret: int) -> bytes:
     """Turns the root secret into a normal symmetric key to encrypt data with.
 
     This is needed because, while a Diffie-Hellman result is a secret, it doesn't work
@@ -150,10 +151,9 @@ def derive_group_key(root_secret: int, label: bytes) -> bytes:
     # Since // rounds down, I add 7 to round up to the next byte if needed.
     secret = int_to_key(root_secret, (root_secret.bit_length() + 7) // 8)
     # HKDF (HMAC-based Key Derivation Function) turns the secret into a random-looking
-    # bytes of length KEY_LEN, using SHA256 inside the HMAC. Different labels give
-    # unrelated keys, so the same root secret can be used for different purposes
+    # bytes of length KEY_LEN, using SHA256 inside the HMAC.
     return HKDF(
-        algorithm=hashes.SHA256(), length=KEY_LEN, salt=None, info=label
+        algorithm=hashes.SHA256(), length=KEY_LEN, salt=None, info=_GROUP_KEY_LABEL
     ).derive(secret)
 
 
