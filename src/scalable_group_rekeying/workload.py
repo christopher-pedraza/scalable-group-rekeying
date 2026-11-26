@@ -26,7 +26,9 @@ def random_events(
     raise NotImplementedError
 
 
-def batch_by_interval(events: Sequence[Event], interval: float) -> list[Batch]:
+def batch_by_interval(
+    initial: Sequence[MemberId], events: Sequence[Event], interval: float
+) -> list[Batch]:
     """Collects the events of each interval into one batch, applied at its end.
 
     Empty intervals give no batch. Every batch must be accepted by apply():
