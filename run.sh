@@ -2,7 +2,5 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-# TODO: decide if we will plot with matplotlib. If so:
-# uv add --group plots matplotlib
-uv sync --locked --group plots
+uv sync --locked
 uv run python demo.py "$@"
