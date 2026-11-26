@@ -1,6 +1,3 @@
-# TODO: I just defined the interface here, we need to implement each of the functions
-# I wrote a small comment on each function to roughly explain what I planned it to do
-# You may change them as you wish Zeyad
 import random
 import secrets
 
