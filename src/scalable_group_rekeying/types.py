@@ -1,5 +1,5 @@
-from dataclasses import dataclass, field
-from enum import StrEnum
+from dataclasses import dataclass, field, fields, is_dataclass
+from enum import Enum, StrEnum
 from typing import NewType
 
 MemberId = NewType("MemberId", int)  # ids ≥ 1, never reused for a different person
@@ -310,6 +310,21 @@ class Snapshot:
 
 
 def to_jsonable(obj: object) -> object:
-    """dataclass/enum/bytes/tuple/frozenset → plain JSON types
-    (bytes→hex, sets→sorted lists)."""
-    ...  # TODO: Still have to implement this!!
+    """dataclass/enum/bytes/tuple/frozenset -> plain JSON types
+    (bytes->hex, sets->sorted lists). Raises TypeError for any other type."""
+    if isinstance(obj, Enum):  # checked first, because a StrEnum is also a str
+        return obj.value
+    if obj is None or isinstance(obj, bool | int | float | str):
+        return obj
+    if isinstance(obj, bytes):
+        return obj.hex()
+    if isinstance(obj, tuple | list):
+        return [to_jsonable(item) for item in obj]
+    if isinstance(obj, set | frozenset):
+        return [to_jsonable(item) for item in sorted(obj)]
+    if is_dataclass(obj) and not isinstance(obj, type):  # an instance, not a class
+        result = {f.name: to_jsonable(getattr(obj, f.name)) for f in fields(obj)}
+        if isinstance(obj, Snapshot):  # members is a property, not a field
+            result["members"] = to_jsonable(obj.members)
+        return result
+    raise TypeError(f"cannot convert {type(obj).__name__} to JSON")
