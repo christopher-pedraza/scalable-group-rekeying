@@ -314,6 +314,8 @@ def to_jsonable(obj: object) -> object:
     (bytes->hex, sets->sorted lists). Raises TypeError for any other type."""
     if isinstance(obj, Enum):  # checked first, because a StrEnum is also a str
         return obj.value
+    if isinstance(obj, int) and abs(obj) > 2**53 - 1:
+        return str(obj)  # JavaScript would round it, so convert it to string
     if obj is None or isinstance(obj, bool | int | float | str):
         return obj
     if isinstance(obj, bytes):
