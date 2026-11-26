@@ -70,7 +70,7 @@ class RekeyScheme(ABC):
         self._signing_keys: dict[
             MemberId | None, bytes
         ] = {}  # per sender (None = controller), never pruned
-        self._public_keys: dict[MemberId | None, bytes] = {}  # same owners
+        self._public_keys: dict[MemberId | None, bytes] = {}  # filled on demand
         self._new_signing_key(None)  # the controller's
         self._pow_cache: dict[
             tuple[int, int, int], int
@@ -204,15 +204,19 @@ class RekeyScheme(ABC):
 
     # ---- signing keys ----
     def _new_signing_key(self, owner: MemberId | None) -> None:
-        """Creates a signing key and stores it with its public key."""
-        private = self.keys.signing_key()
-        self._signing_keys[owner] = private
-        self._public_keys[owner] = derive_public_key(private)
+        """Creates a signing key and caches it. The public key is derived on demand."""
+        self._signing_keys[owner] = self.keys.signing_key()
 
     def public_key(self, sender: MemberId | None) -> bytes | None:
-        """Gets the public signing key for a member. None if the sender has no signing
-        key"""
-        return self._public_keys.get(sender)
+        """Gets the public signing key for a member and caches it. None if the sender
+        has no signing key"""
+        public = self._public_keys.get(sender)
+        if (
+            public is None and sender in self._signing_keys
+        ):  # no public key yet but private key exists
+            public = derive_public_key(self._signing_keys[sender])
+            self._public_keys[sender] = public
+        return public
 
     def signing_key(self, member: MemberId) -> bytes | None:
         """Gets the private signing key for a member. Outside the scheme, only a
