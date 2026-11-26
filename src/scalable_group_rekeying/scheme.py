@@ -1,5 +1,6 @@
 import itertools
 from abc import ABC, abstractmethod
+from collections import Counter
 from collections.abc import (
     Callable,
     Sequence,
@@ -53,6 +54,18 @@ class DeliveryResult:
     learned: tuple[KeyRef, ...]  # keys it newly acquired
 
 
+def _caption(epoch: Epoch, batch: Batch) -> str:
+    """The UI caption for Snapshot.last_event."""
+    if epoch == 0:
+        return f"init: {len(batch.events)} members"
+    if len(batch.events) == 1:
+        event = batch.events[0]
+        return f"{event.kind} u{event.member}"  # "leave u7"
+    counts = Counter(e.kind for e in batch.events)
+    parts = [f"{counts[kind]} {kind}" for kind in EventKind if counts[kind]]
+    return "batch: " + ", ".join(parts)  # "batch: 3 join, 2 leave"
+
+
 class RekeyScheme(ABC):
     name: ClassVar[str]  # "star" | "lkh" | "tgdh"
     supports_batch: ClassVar[bool] = False
@@ -82,6 +95,7 @@ class RekeyScheme(ABC):
         # on every lookup. IDs will differ even if the content is the same
         self._verified: dict[int, tuple[RekeyMessage, bool]] = {}
         self._node_ids = itertools.count()  # iterator of the nodes (start=0 step=1)
+        self.last_event = ""
 
     # ---- lifecycle ----
     def init(self, members: Sequence[MemberId]) -> RekeyOutcome:
@@ -189,6 +203,7 @@ class RekeyScheme(ABC):
         # would now inherit the cached verification result. Clear on every batch
         self._verified.clear()
         self.epoch = Epoch(self.epoch + 1)
+        self.last_event = _caption(self.epoch, batch)
         for e in batch.events:  # a rejoining member keeps their old ring
             if e.member not in self._rings:
                 self._rings[e.member] = KeyRing(e.member)
@@ -319,7 +334,7 @@ class RekeyScheme(ABC):
         - held, on_copath: from viewer's point of view; False if viewer is None
         - bk_fp, on_copath, is_sponsor: TGDH only
         - wrap_edges: one per (wrapper, payload) pair in the last batch (Star/LKH)
-        - last_event: caption such as "leave u7"
+        - last_event: use self.last_event
         - cost: leave None, as it is only known after the batch returns"""
 
     # ---- helpers shared by all schemes ----
