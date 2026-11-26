@@ -137,10 +137,6 @@ class RekeyScheme(ABC):
     def _apply(self, batch: Batch) -> Sequence[RekeyMessage]:
         """Scheme-specific rekey for self.epoch: updates the keys and returns the
         messages, already signed, in send order."""
-        # TODO: This is the method that we will be overwriting in our schemes @Zeyad!
-        # Also, don't catch errors in this function because if there's an error and the
-        # execution continues, then we will have (from apply()) a half updated state
-        # let the error stop the run and fix the bug.
 
     def _run(
         self, batch: Batch, step: Callable[[Batch], Sequence[RekeyMessage]]
