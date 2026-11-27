@@ -109,14 +109,17 @@ class Wrap:
 
 @dataclass(frozen=True, slots=True)
 class BlindedKey:
-    """A TGDH public value a^key mod p, with the refs of its two children."""
+    """One published TGDH node: its public value a^key mod p, with the refs of its two
+    children or, for a leaf, its member."""
 
     node: KeyRef
-    bk: bytes
+    bk: bytes  # b"" on the root, whose public value nobody needs
     # If it's a leaf, children is empty. Otherwise, they are the two nodes that were
     # combined to compute this BK. Lets the verifier apply the DH rule without importing
     # the TGDH code.
     children: tuple[KeyRef, ...] = ()
+    # The member on a leaf, None on any other node. A joiner needs it to learn the tree
+    member: MemberId | None = None
 
 
 @dataclass(frozen=True, slots=True)

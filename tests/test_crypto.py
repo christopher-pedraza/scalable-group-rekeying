@@ -196,6 +196,7 @@ MESSAGE = RekeyMessage(
         replace(MESSAGE, blinded=(replace(BLINDED, node=REF_B),)),
         replace(MESSAGE, blinded=(replace(BLINDED, bk=b"\x06"),)),
         replace(MESSAGE, blinded=(replace(BLINDED, children=()),)),
+        replace(MESSAGE, blinded=(replace(BLINDED, member=MemberId(3)),)),
     ],
 )
 def test_changing_any_signed_field_changes_the_bytes(changed: RekeyMessage) -> None:
@@ -217,4 +218,9 @@ def test_no_message_field_was_added_without_updating_the_encoding() -> None:
         "signature",
     }
     assert {f.name for f in fields(Wrap)} == {"wrapper", "payloads", "blob"}
-    assert {f.name for f in fields(BlindedKey)} == {"node", "bk", "children"}
+    assert {f.name for f in fields(BlindedKey)} == {
+        "node",
+        "bk",
+        "children",
+        "member",
+    }

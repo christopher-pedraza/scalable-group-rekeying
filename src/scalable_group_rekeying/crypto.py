@@ -228,4 +228,5 @@ def message_bytes(msg: RekeyMessage) -> bytes:
     parts.append(_num(len(msg.blinded)))
     for b in msg.blinded:
         parts += [_ref(b.node), _sized(b.bk), _refs(b.children)]
+        parts.append(_num(b.member or 0))  # member >= 1, no member = 0
     return b"".join(parts)
