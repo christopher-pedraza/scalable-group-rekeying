@@ -1,5 +1,15 @@
 # @Chris
 
+"""IMPORTANT
+
+The DH rule only works if every parent is published as a BlindedKey with its children,
+including the root. TGDH doesn't normally need the root's blinded key, and the _apply
+docstring doesn't clearly require it. Without it, closure never derives the root secret,
+so members would show false REACHABILITY violations and real leaks of the group key
+would go unnoticed. Every parent, including the root, must be published as a BlindedKey
+with its children
+"""
+
 from collections.abc import Sequence
 
 from scalable_group_rekeying.scheme import DeliveryResult, RekeyScheme
