@@ -1,0 +1,1 @@
+- Data messages are encrypted but not signed. Any holder of the group key can send a message as another member. Sender authentication of application data is out of scope.
