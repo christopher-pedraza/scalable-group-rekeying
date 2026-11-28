@@ -87,7 +87,7 @@ THREAT MODEL AND EXPERIMENTS
 - Run TGDH with at most 1024 members. The member trees alone take about 250 MB there.
 """
 
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 
 from scalable_group_rekeying.scheme import DeliveryResult, RekeyScheme
@@ -134,12 +134,106 @@ def _branch(ref: KeyRef, left: _Node, right: _Node) -> _Node:
     return node
 
 
+def _path(node: _Node) -> list[_Node]:
+    """The node and every node above it, ending at the root."""
+    path = [node]
+    while (above := path[-1].parent) is not None:
+        path.append(above)
+    return path
+
+
+def _sibling(node: _Node) -> _Node:
+    """The other child of the node's parent. The root has no sibling."""
+    parent = node.parent
+    assert parent is not None
+    other = parent.right if node is parent.left else parent.left
+    assert other is not None
+    return other
+
+
+def _nodes(root: _Node) -> Iterator[_Node]:
+    """Yields root and every node under it, parents first and left before right."""
+    todo = [root]
+    while todo:
+        node = todo.pop()
+        yield node  # hands out nodes one at a time so the caller can iterate over them
+        if node.left is not None and node.right is not None:  # not a leaf
+            todo += (node.right, node.left)
+
+
+def _insertion_point(root: _Node) -> _Node:
+    """The node a new leaf gets paired with: the shallowest, rightmost one where this
+    doesn't make the tree taller, or else the root."""
+    level, depth = [root], 0
+    while level:
+        for node in level:
+            # Pair a node at depth with a new leaf reaches down to depth+node.height+1
+            if depth + node.height < root.height:
+                return node
+        # the next level down, still ordered from right to left
+        level = [c for n in level for c in (n.right, n.left) if c is not None]
+        depth += 1
+    # If every level is full, the new leaf pairs with the root, and the tree grows by 1
+    return root
+
+
+def _renew_path(leaf: _Node, created: _Node | None = None) -> None:
+    """Walks from the sponsor's leaf to the root, updating heights, bumping versions and
+    clearing blinded keys. The node a join has just created keeps its version."""
+    for node in _path(leaf):
+        if node.left is not None and node.right is not None:
+            node.height = 1 + max(node.left.height, node.right.height)
+        if node is not created:
+            node.ref = KeyRef(node.ref.node, node.ref.version + 1)
+            node.bk = None
+
+
 @dataclass(slots=True)
 class _Tree:
     """One copy of the key tree: its root, and where each member's leaf is."""
 
     root: _Node
     leaves: dict[MemberId, _Node]
+
+    def add(self, member: MemberId, leaf_ref: KeyRef, parent_ref: KeyRef) -> MemberId:
+        """Joins member next to the insertion point, renews the sponsor's path and
+        returns the sponsor."""
+        target = _insertion_point(self.root)  # decide where to put the new leaf
+        above = target.parent  # read it now, as _branch overwrites it
+        sponsor = (
+            target.rightmost
+        )  # select the sponsor as the rightmost leaf under the target insertion point
+        self.leaves[member] = _Node(leaf_ref, member)
+        created = _branch(
+            parent_ref, target, self.leaves[member]
+        )  # put old subtree on the left and joiner to the right
+        self._replace(target, created, above)  # hangs the new branch where target was
+        _renew_path(self.leaves[sponsor], created)  # update nodes in the sponsor's path
+        return sponsor
+
+    def remove(self, member: MemberId) -> MemberId:
+        """Removes member, moves its sibling up into the parent's place, renews the
+        sponsor's path and returns the sponsor."""
+        leaf = self.leaves.pop(member)
+        parent = leaf.parent
+        assert parent is not None  # the last member can't leave
+        sibling = _sibling(leaf)
+        self._replace(
+            parent, sibling, parent.parent
+        )  # promote the sibling into the parent's place
+        sponsor = sibling.rightmost
+        _renew_path(self.leaves[sponsor])
+        return sponsor
+
+    def _replace(self, old: _Node, new: _Node, above: _Node | None) -> None:
+        """Puts new where old was: under above, or at the root if above is None."""
+        new.parent = above
+        if above is None:
+            self.root = new
+        elif above.left is old:
+            above.left = new
+        else:
+            above.right = new
 
 
 @dataclass(frozen=True, slots=True)
