@@ -88,15 +88,102 @@ THREAT MODEL AND EXPERIMENTS
 """
 
 from collections.abc import Sequence
+from dataclasses import dataclass, field
 
 from scalable_group_rekeying.scheme import DeliveryResult, RekeyScheme
 from scalable_group_rekeying.types import (
     Batch,
+    Epoch,
     KeyRef,
     MemberId,
     RekeyMessage,
     Snapshot,
 )
+
+
+# eq=False so nodes are compared by identity and not their fields
+@dataclass(slots=True, eq=False)
+class _Node:
+    """One node of a key tree. It holds only public values; a member's secret for it is
+    in that member's KeyRing, under ref."""
+
+    ref: KeyRef
+    member: MemberId | None = None  # set on a leaf only
+    parent: "_Node | None" = field(default=None, repr=False)
+    left: "_Node | None" = field(default=None, repr=False)
+    right: "_Node | None" = field(default=None, repr=False)
+    height: int = 0  # edges down to the deepest leaf
+    bk: bytes | None = None  # blinded key, once computed or received
+
+    @property
+    def rightmost(self) -> MemberId:
+        """The member on the rightmost leaf under this node. This is how sponsors are
+        picked"""
+        node = self
+        while node.right is not None:
+            node = node.right
+        assert node.member is not None
+        return node.member
+
+
+def _branch(ref: KeyRef, left: _Node, right: _Node) -> _Node:
+    """Builds the node above left and right and links them to it."""
+    height = 1 + max(left.height, right.height)
+    node = _Node(ref, left=left, right=right, height=height)
+    left.parent = right.parent = node
+    return node
+
+
+@dataclass(slots=True)
+class _Tree:
+    """One copy of the key tree: its root, and where each member's leaf is."""
+
+    root: _Node
+    leaves: dict[MemberId, _Node]
+
+
+@dataclass(frozen=True, slots=True)
+class _Joining:
+    """What a joiner is told about its place before it has the tree.
+
+    When the sponsor's message arrives, the joiner checks that the leaf and parent have
+    the given ids, that the leaf is the right child of the parent, and that the sender
+    is the rightmost member under the joiner's sibling."""
+
+    leaf: _Node  # its own leaf, whose bk it fills in when it publishes
+    parent: KeyRef  # the new node that will sit above that leaf
+    others: frozenset[MemberId]  # the members already in the group
+
+
+@dataclass(slots=True)
+class _Round:
+    """What a member was told about one epoch, and the rekey progress through it. As
+    rekey can take several messages, a member must remember which epoch it's waiting
+    for, who may send, and whether the root's entry has arrived"""
+
+    epoch: Epoch
+    sponsor: MemberId | None = None  # None in the initial group and for a joiner
+    joiner: MemberId | None = None  # who else is joining or rejoining, if anyone
+    joining: _Joining | None = None  # set only for the joiner itself
+    root_seen: bool = False  # True once the root's entry is accepted
+
+
+@dataclass(slots=True)
+class _MemberState:
+    """What one member keeps between messages, apart from the secrets in its KeyRing."""
+
+    current: _Round  # replaced at every announcement
+    tree: _Tree | None = None  # None while joining and after leaving
+    completed: Epoch = Epoch(
+        -1
+    )  # last epoch it got the group key for, starts at -1 meaning never
+    group_key: tuple[KeyRef, bytes] | None = None  # the key from that epoch
+    last_leaf: KeyRef | None = None  # its leaf ref when it last left
+
+    @property
+    def done(self) -> bool:
+        """True once the member has the group key of the current epoch."""
+        return self.completed == self.current.epoch
 
 
 class TGDH(RekeyScheme):
